@@ -185,11 +185,19 @@ atcp_status_t atcp_frame_sync_feed_batch(atcp_frame_sync_t *sync, const float *s
 {
     if (!sync || !samples) return ATCP_ERR_INVALID_PARAM;
 
+    /* 记录本次 batch 开始时的全局采样计数，
+     * 用于将 frame_offset（全局坐标）转换为 batch 内局部偏移 */
+    int batch_start = sync->sample_count;
+
     for (int i = 0; i < n; i++) {
         atcp_status_t st = atcp_frame_sync_feed(sync, samples[i]);
         if (st != ATCP_OK) return st;
         if (sync->detected) {
-            sync->local_offset = i;
+            /* frame_offset 是帧起始位置的全局采样索引，
+             * 转换为本次 batch 内的局部偏移 */
+            sync->local_offset = sync->frame_offset - batch_start;
+            if (sync->local_offset < 0)
+                sync->local_offset = 0;
             break;
         }
     }

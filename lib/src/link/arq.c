@@ -152,6 +152,15 @@ void atcp_arq_sender_mark_sent(atcp_arq_sender_t *s, uint16_t seq, uint32_t now_
     if (idx >= s->window_size) return;
     int slot = idx % ATCP_ARQ_MAX_WINDOW;
     s->send_time[slot] = now_ms;
+
+    /* 更新 next_seq：当调用方绕过 get_next 直接发送时，
+     * 需要同步推进 next_seq，否则 window_full / check_timeout 失效 */
+    uint16_t next = (uint16_t)(seq + 1);
+    int dist_next = (next - s->base_seq) & 0xFFFF;
+    int dist_cur  = (s->next_seq - s->base_seq) & 0xFFFF;
+    if (dist_next > dist_cur) {
+        s->next_seq = next;
+    }
 }
 
 /* ========== 接收端 ========== */

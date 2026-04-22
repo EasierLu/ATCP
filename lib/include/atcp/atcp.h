@@ -63,6 +63,9 @@ ATCP_API atcp_state_t atcp_get_state(const atcp_instance_t *inst);
 /* 获取统计信息 */
 ATCP_API atcp_stats_t atcp_get_stats(const atcp_instance_t *inst);
 
+/* 获取音频缓冲区大小（float 个数）—— 平台层需保证缓冲区不小于此值 */
+ATCP_API int atcp_get_audio_buf_size(const atcp_instance_t *inst);
+
 #ifdef __cplusplus
 }
 #endif
