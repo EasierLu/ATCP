@@ -5,7 +5,7 @@
 
 #include "modulation/ofdm.h"
 #include "modulation/qam.h"
-#include "audiothief/config.h"
+#include "atcp/config.h"
 
 #define TEST_ASSERT(cond, msg) do { \
     if (!(cond)) { \

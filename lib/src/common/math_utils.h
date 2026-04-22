@@ -1,6 +1,6 @@
 #ifndef ATCP_MATH_UTILS_H
 #define ATCP_MATH_UTILS_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* 复数运算 */
 atcp_complex_t atcp_complex_mul(atcp_complex_t a, atcp_complex_t b);

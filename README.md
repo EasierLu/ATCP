@@ -52,11 +52,11 @@ ATCP 是一个**纯 C99 实现、零外部依赖**的音频信道数据通信协
 ```bash
 # 动态库（默认）
 cmake -B build
-cmake --build build
+cmake --build build --config Release
 
 # 静态库（推荐嵌入式场景）
 cmake -B build -DBUILD_SHARED_LIBS=OFF
-cmake --build build
+cmake --build build --config Release
 ```
 
 | CMake 选项 | 默认值 | 说明 |
@@ -69,7 +69,7 @@ cmake --build build
 ## 快速上手
 
 ```c
-#include <audiothief/audiothief.h>
+#include <atcp/atcp.h>
 
 /* 1. 实现平台回调 */
 int my_audio_write(const float *samples, int n, int ch, void *ud) { /* 写声卡 */ return n; }
@@ -130,18 +130,18 @@ int main(void) {
 ```
 ATCP/
 ├── CMakeLists.txt                 # 顶层构建配置
-├── AudioThief.md                  # 系统设计文档（协议规格）
+├── ATCP.md                  # 系统设计文档（协议规格）
 └── lib/
     ├── CMakeLists.txt             # 库构建配置
     ├── USER_GUIDE.md              # 用户指南
     ├── DEVELOPER_GUIDE.md         # 开发者指南
-    ├── include/audiothief/        # 公开头文件
-    │   ├── audiothief.h           #   统一 API 入口
+    ├── include/atcp/        # 公开头文件
+    │   ├── atcp.h           #   统一 API 入口
     │   ├── types.h                #   类型定义、状态码
     │   ├── config.h               #   配置结构与默认值
     │   └── platform.h             #   平台抽象回调接口
     ├── src/
-    │   ├── audiothief.c           # API 实现（集成层）
+    │   ├── atcp.c           # API 实现（集成层）
     │   ├── common/                # FFT、复数运算、环形缓冲区、PRNG
     │   ├── physical/              # 差分编码、AGC、CFO/SFO 补偿
     │   ├── modulation/            # OFDM、QAM、训练序列、帧同步、信道估计
@@ -169,7 +169,7 @@ ATCP/
 
 ## 文档
 
-- [系统设计文档](AudioThief.md) — 协议规格、物理层设计、调制方案、链路层机制
+- [系统设计文档](ATCP.md) — 协议规格、物理层设计、调制方案、链路层机制
 - [用户指南](lib/USER_GUIDE.md) — 构建步骤、完整 API 参考、配置参数说明
 - [开发者指南](lib/DEVELOPER_GUIDE.md) — 架构设计、模块详解、开发规范、扩展指南
 

@@ -1,6 +1,6 @@
 #ifndef ATCP_SFO_H
 #define ATCP_SFO_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* SFO估计：通过多个导频符号的相位漂移趋势
  * pilot_phases: 各导频符号上某个参考子载波的相位（弧度），长度n_pilots

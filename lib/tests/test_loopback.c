@@ -3,8 +3,8 @@
 #include <math.h>
 #include <string.h>
 
-#include "audiothief/config.h"
-#include "audiothief/types.h"
+#include "atcp/config.h"
+#include "atcp/types.h"
 #include "coding/reed_solomon.h"
 #include "coding/crc32.h"
 #include "modulation/qam.h"
@@ -46,7 +46,7 @@ int main(void)
            n_subs, bps, bytes_per_symbol);
 
     /* 2. 原始数据 */
-    const uint8_t original[] = "AudioThief Loopback Test - Hello World! 1234567890";
+    const uint8_t original[] = "ATCP Loopback Test - Hello World! 1234567890";
     int orig_len = (int)strlen((const char *)original);
     printf("  original data length = %d\n", orig_len);
 

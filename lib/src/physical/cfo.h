@@ -1,7 +1,7 @@
 #ifndef ATCP_CFO_H
 #define ATCP_CFO_H
-#include "../../include/audiothief/types.h"
-#include "../../include/audiothief/config.h"
+#include "../../include/atcp/types.h"
+#include "../../include/atcp/config.h"
 
 /* Moose算法估计分数CFO
  * 利用OFDM符号的CP重复结构

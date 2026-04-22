@@ -13,5 +13,13 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 if(BUILD_TESTS)
+    # 测试需要访问库的内部符号，构建一个静态版本供测试链接
+    add_library(atcp_static STATIC ${ATCP_SOURCES})
+    target_include_directories(atcp_static
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+    )
+    target_compile_definitions(atcp_static PUBLIC ATCP_STATIC)
     add_subdirectory(tests)
 endif()

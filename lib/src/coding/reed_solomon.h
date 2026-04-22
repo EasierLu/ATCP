@@ -1,6 +1,6 @@
 #ifndef ATCP_REED_SOLOMON_H
 #define ATCP_REED_SOLOMON_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* RS编解码上下文 */
 typedef struct {

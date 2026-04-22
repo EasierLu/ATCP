@@ -1,8 +1,8 @@
-# AudioThief 用户指南
+# ATCP 用户指南
 
 ## 1. 简介
 
-AudioThief 是一个纯 C 语言实现的音频信道数据通信协议栈库。它通过标准 3.5mm 音频接口（Speaker Out / Mic In）在 PC 与 MCU 之间建立双向数据通道，实现绕过网络层的隐蔽通信。
+ATCP 是一个纯 C 语言实现的音频信道数据通信协议栈库。它通过标准 3.5mm 音频接口（Speaker Out / Mic In）在 PC 与 MCU 之间建立双向数据通道，实现绕过网络层的隐蔽通信。
 
 **核心特性：**
 
@@ -26,14 +26,14 @@ AudioThief 是一个纯 C 语言实现的音频信道数据通信协议栈库。
 
 ```bash
 cmake -B build -DBUILD_SHARED_LIBS=OFF
-cmake --build build
+cmake --build build  --config Release
 ```
 
 **动态库（DLL/SO）：**
 
 ```bash
 cmake -B build -DBUILD_SHARED_LIBS=ON
-cmake --build build
+cmake --build build  --config Release
 ```
 
 静态库模式下，建议在你的项目中定义 `ATCP_STATIC` 宏以消除导出符号装饰。
@@ -43,21 +43,21 @@ cmake --build build
 **CMake `add_subdirectory` 方式：**
 
 ```cmake
-add_subdirectory(path/to/AudioThief/lib)
-target_link_libraries(your_app PRIVATE audiothief)
+add_subdirectory(path/to/ATCP/lib)
+target_link_libraries(your_app PRIVATE atcp)
 ```
 
 **手动链接：**
 
 - 头文件目录：`lib/include`
-- 库文件：`audiothief.lib` / `libaudiothief.a` / `audiothief.dll`
+- 库文件：`atcp.lib` / `libatcp.a` / `atcp.dll`
 
 ## 3. 快速上手
 
 ### 3.1 最小使用示例
 
 ```c
-#include <audiothief/audiothief.h>
+#include <atcp/atcp.h>
 
 /* ---- 1. 实现平台回调 ---- */
 
@@ -219,7 +219,7 @@ atcp_instance_t *inst = atcp_create(&cfg, &platform);
 
 ## 6. 平台回调接口
 
-使用 AudioThief 必须实现 `atcp_platform_t` 中的三个回调：
+使用 ATCP 必须实现 `atcp_platform_t` 中的三个回调：
 
 ### 6.1 audio_write
 
@@ -306,21 +306,21 @@ uint32_t (*get_time_ms)(void *user_data);
 
 ## 9. 高级用法：直接使用子层 API
 
-除了统一的高层 API，AudioThief 也暴露了各协议层的接口，供高级用户按需组合使用。
+除了统一的高层 API，ATCP 也暴露了各协议层的接口，供高级用户按需组合使用。
 
 通过包含对应的层级头文件即可访问：
 
 ```c
-#include <audiothief/coding.h>      /* RS 编解码、CRC32 */
-#include <audiothief/modulation.h>  /* QAM、OFDM、帧同步、信道估计 */
-#include <audiothief/physical.h>    /* 差分编解码、AGC、CFO/SFO */
-#include <audiothief/link.h>        /* 帧结构、握手、ARQ、ACK、心跳 */
+#include <atcp/coding.h>      /* RS 编解码、CRC32 */
+#include <atcp/modulation.h>  /* QAM、OFDM、帧同步、信道估计 */
+#include <atcp/physical.h>    /* 差分编解码、AGC、CFO/SFO */
+#include <atcp/link.h>        /* 帧结构、握手、ARQ、ACK、心跳 */
 ```
 
 **示例 —— 单独使用 RS 编解码：**
 
 ```c
-#include <audiothief/coding.h>
+#include <atcp/coding.h>
 
 atcp_rs_t rs;
 atcp_rs_init(&rs, 48);  /* 48 冗余符号，纠错 24 字节/块 */
@@ -339,8 +339,8 @@ atcp_rs_decode_blocks(&rs, coded, coded_len, decoded, &decoded_len);
 **示例 —— 单独使用 QAM + OFDM：**
 
 ```c
-#include <audiothief/modulation.h>
-#include <audiothief/config.h>
+#include <atcp/modulation.h>
+#include <atcp/config.h>
 
 atcp_config_t cfg = atcp_config_default();
 
@@ -382,7 +382,7 @@ atcp_ofdm_modulate(symbols, n_subs, &cfg, time_samples, &time_len);
 A: 任何支持 C99 编译器的平台。已在 Windows (MSVC)、Linux (GCC)、STM32 (ARM GCC)、ESP32 (Xtensa GCC) 上验证构建。
 
 **Q: 是否需要外部依赖？**
-A: 不需要。AudioThief 零外部依赖，仅使用 C 标准库和 `<math.h>`。Unix/Linux 需链接 `-lm`。
+A: 不需要。ATCP 零外部依赖，仅使用 C 标准库和 `<math.h>`。Unix/Linux 需链接 `-lm`。
 
 **Q: 如何提高传输速率？**
 A: 提高 QAM 阶数（需信道 SNR 支持）、提高采样率（需双方声卡支持）、或减少 RS 冗余（`rs_nsym`，会降低纠错能力）。

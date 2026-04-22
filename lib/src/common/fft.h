@@ -1,6 +1,6 @@
 #ifndef ATCP_FFT_H
 #define ATCP_FFT_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* 正向FFT（原地） */
 atcp_status_t atcp_fft(atcp_complex_t *buf, int n);

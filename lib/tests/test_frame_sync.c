@@ -6,7 +6,7 @@
 #include "modulation/frame_sync.h"
 #include "modulation/training.h"
 #include "modulation/ofdm.h"
-#include "audiothief/config.h"
+#include "atcp/config.h"
 
 #define TEST_ASSERT(cond, msg) do { \
     if (!(cond)) { \

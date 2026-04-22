@@ -1,6 +1,6 @@
 #ifndef ATCP_CHANNEL_EST_H
 #define ATCP_CHANNEL_EST_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* 信道估计：从接收的训练符号计算信道频率响应H(k)
  * rx_train: 接收端FFT后的训练符号频域数据（n_subs个）

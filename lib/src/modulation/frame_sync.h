@@ -1,7 +1,7 @@
 #ifndef ATCP_FRAME_SYNC_H
 #define ATCP_FRAME_SYNC_H
-#include "../../include/audiothief/types.h"
-#include "../../include/audiothief/config.h"
+#include "../../include/atcp/types.h"
+#include "../../include/atcp/config.h"
 
 /* 帧同步状态 */
 typedef struct {

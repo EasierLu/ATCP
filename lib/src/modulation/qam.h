@@ -1,6 +1,6 @@
 #ifndef ATCP_QAM_H
 #define ATCP_QAM_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* 返回每符号比特数：4->2, 16->4, 64->6, 256->8 */
 int atcp_qam_bits_per_symbol(int order);

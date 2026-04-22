@@ -1,6 +1,6 @@
 #ifndef ATCP_HEARTBEATCP_H
 #define ATCP_HEARTBEATCP_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 typedef struct {
     uint32_t last_rx_time_ms;    /* 上次收到任何帧的时间 */

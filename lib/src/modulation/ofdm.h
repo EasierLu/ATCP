@@ -1,7 +1,7 @@
 #ifndef ATCP_OFDM_H
 #define ATCP_OFDM_H
-#include "../../include/audiothief/types.h"
-#include "../../include/audiothief/config.h"
+#include "../../include/atcp/types.h"
+#include "../../include/atcp/config.h"
 
 /* 计算可用数据子载波数 */
 int atcp_ofdm_num_subcarriers(const atcp_config_t *cfg);

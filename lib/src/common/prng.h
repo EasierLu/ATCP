@@ -1,6 +1,6 @@
 #ifndef ATCP_PRNG_H
 #define ATCP_PRNG_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 typedef struct {
     uint32_t state;

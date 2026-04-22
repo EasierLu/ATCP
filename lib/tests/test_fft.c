@@ -6,6 +6,10 @@
 #include "common/fft.h"
 #include "common/math_utils.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define TEST_ASSERT(cond, msg) do { \
     if (!(cond)) { \
         printf("FAIL: %s (line %d): %s\n", __FILE__, __LINE__, msg); \

@@ -1,5 +1,5 @@
-#ifndef ATCP_AUDIOTHIEF_H
-#define ATCP_AUDIOTHIEF_H
+#ifndef ATCP_H
+#define ATCP_H
 
 #include "types.h"
 #include "config.h"
@@ -14,7 +14,7 @@ typedef struct atcp_instance atcp_instance_t;
 
 /* === 生命周期 === */
 
-/* 创建AudioThief实例
+/* 创建ATCP实例
  * config: 协议配置（NULL使用默认值）
  * platform: 平台回调接口（必须非NULL）
  * 返回: 实例指针，失败返回NULL */
@@ -67,4 +67,4 @@ ATCP_API atcp_stats_t atcp_get_stats(const atcp_instance_t *inst);
 }
 #endif
 
-#endif /* ATCP_AUDIOTHIEF_H */
+#endif /* ATCP_H */

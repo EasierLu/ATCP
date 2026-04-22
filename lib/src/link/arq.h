@@ -1,6 +1,6 @@
 #ifndef ATCP_ARQ_H
 #define ATCP_ARQ_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 #define ATCP_ARQ_MAX_WINDOW 16
 #define ATCP_ARQ_MAX_BLOCK_SIZE 256

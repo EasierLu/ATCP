@@ -1,7 +1,7 @@
 #ifndef ATCP_TRAINING_H
 #define ATCP_TRAINING_H
-#include "../../include/audiothief/types.h"
-#include "../../include/audiothief/config.h"
+#include "../../include/atcp/types.h"
+#include "../../include/atcp/config.h"
 
 /* 生成BPSK训练/导频频域符号
  * seed: PRNG种子（默认42）

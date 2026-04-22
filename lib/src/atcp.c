@@ -1,12 +1,12 @@
 /*
- * AudioThief - 公开API实现（集成层）
+ * ATCP - 公开API实现（集成层）
  * 封装所有底层模块为统一接口
  */
 
-#include "../include/audiothief/audiothief.h"
-#include "../include/audiothief/types.h"
-#include "../include/audiothief/config.h"
-#include "../include/audiothief/platform.h"
+#include "../include/atcp/atcp.h"
+#include "../include/atcp/types.h"
+#include "../include/atcp/config.h"
+#include "../include/atcp/platform.h"
 
 /* 内部模块头文件 */
 #include "modulation/ofdm.h"

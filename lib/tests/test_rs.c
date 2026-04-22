@@ -30,7 +30,7 @@ int main(void)
     atcp_status_t s = atcp_rs_init(&rs, 48);
     TEST_ASSERT(s == ATCP_OK, "RS init should succeed");
 
-    const char *test_msg = "Hello, AudioThief RS Test!";
+    const char *test_msg = "Hello, ATCP RS Test!";
     int msg_len = (int)strlen(test_msg);
 
     /* Test 1: No errors */

@@ -1,6 +1,6 @@
 #ifndef ATCP_DIFF_SIGNAL_H
 #define ATCP_DIFF_SIGNAL_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 /* 差分编码：单信号 -> 左右声道
  * signal[n] -> left[n] = +signal[n], right[n] = -signal[n] */

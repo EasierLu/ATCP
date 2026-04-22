@@ -1,21 +1,21 @@
-# AudioThief 开发者指南
+# ATCP 开发者指南
 
 ## 1. 项目概览
 
-AudioThief 是一个五层协议栈的纯 C99 类库，实现基于音频接口的隐蔽数据通信。本文档面向希望理解内部实现、修改或扩展该库的开发者。
+ATCP 是一个五层协议栈的纯 C99 类库，实现基于音频接口的隐蔽数据通信。本文档面向希望理解内部实现、修改或扩展该库的开发者。
 
 ## 2. 目录结构
 
 ```
-AudioThief/
+ATCP/
 ├── CMakeLists.txt              # 顶层构建配置
-├── AudioThief.md               # 系统设计文档（协议规格）
+├── ATCP.md               # 系统设计文档（协议规格）
 └── lib/
     ├── CMakeLists.txt           # 库构建配置
     ├── USER_GUIDE.md            # 用户指南
     ├── DEVELOPER_GUIDE.md       # 本文档
-    ├── include/audiothief/      # 公开头文件
-    │   ├── audiothief.h         #   统一 API 入口
+    ├── include/atcp/      # 公开头文件
+    │   ├── atcp.h         #   统一 API 入口
     │   ├── types.h              #   类型定义、状态码、DLL 导出宏
     │   ├── config.h             #   配置结构与默认值
     │   ├── platform.h           #   平台抽象回调接口
@@ -24,7 +24,7 @@ AudioThief/
     │   ├── coding.h             #   编码层聚合头文件
     │   └── link.h               #   链路层聚合头文件
     ├── src/
-    │   ├── audiothief.c         # API 实现（集成层）
+    │   ├── atcp.c         # API 实现（集成层）
     │   ├── common/              # 通用工具
     │   │   ├── fft.c/h          #   FFT / IFFT
     │   │   ├── math_utils.c/h   #   复数运算、信号工具
@@ -71,7 +71,7 @@ AudioThief/
 ┌─────────────────────────────────────────────┐
 │            应用层 (Application)              │  用户代码，不在库内
 ├─────────────────────────────────────────────┤
-│              API 集成层                      │  audiothief.c
+│              API 集成层                      │  atcp.c
 │   atcp_create / atcp_tick / atcp_send / atcp_recv   │  封装所有子层为统一接口
 ├─────────────────────────────────────────────┤
 │            链路层 (Link)                     │  frame, handshake, arq, ack, heartbeat
@@ -94,11 +94,11 @@ AudioThief/
 
 - **严格上层依赖下层**：链路层可调用编码层，编码层可调用调制层，但反向禁止
 - **Common 为最底层**：所有层均可调用 common 中的工具函数
-- **API 层为唯一入口**：`audiothief.c` 是唯一串联所有层的文件
+- **API 层为唯一入口**：`atcp.c` 是唯一串联所有层的文件
 
 ### 3.3 核心实例结构
 
-`atcp_instance`（定义在 `audiothief.c` 中，对外不透明）封装了全部运行时状态：
+`atcp_instance`（定义在 `atcp.c` 中，对外不透明）封装了全部运行时状态：
 
 ```c
 struct atcp_instance {
@@ -537,7 +537,7 @@ cd build && ctest --output-on-failure
 ### 9.2 添加新的帧类型
 
 1. 在 `types.h` 的 `atcp_frame_type_t` 中添加新类型
-2. 在 `audiothief.c` 的 `inst_process_received_frame()` 中添加 `case` 分支
+2. 在 `atcp.c` 的 `inst_process_received_frame()` 中添加 `case` 分支
 3. 编写对应的帧构建和解析逻辑
 
 ### 9.3 替换 FFT 实现

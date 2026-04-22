@@ -1,7 +1,7 @@
 #ifndef ATCP_HANDSHAKE_H
 #define ATCP_HANDSHAKE_H
-#include "../../include/audiothief/types.h"
-#include "../../include/audiothief/config.h"
+#include "../../include/atcp/types.h"
+#include "../../include/atcp/config.h"
 
 /* 握手阶段 */
 typedef enum {

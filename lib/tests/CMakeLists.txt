@@ -1,4 +1,4 @@
-# AudioThief 单元测试
+# ATCP 单元测试
 enable_testing()
 
 # 因为测试需要直接访问内部头文件，添加内部src目录到include路径
@@ -19,7 +19,7 @@ set(TEST_SOURCES
 
 foreach(test_name ${TEST_SOURCES})
     add_executable(${test_name} ${test_name}.c)
-    target_link_libraries(${test_name} PRIVATE atcp)
+    target_link_libraries(${test_name} PRIVATE atcp_static)
     target_include_directories(${test_name} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

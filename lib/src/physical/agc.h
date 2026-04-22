@@ -1,6 +1,6 @@
 #ifndef ATCP_AGC_H
 #define ATCP_AGC_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 typedef struct {
     float target_amplitude;    /* 目标幅度（默认0.5） */

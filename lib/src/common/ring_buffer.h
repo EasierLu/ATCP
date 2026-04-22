@@ -1,6 +1,6 @@
 #ifndef ATCP_RING_BUFFER_H
 #define ATCP_RING_BUFFER_H
-#include "../../include/audiothief/types.h"
+#include "../../include/atcp/types.h"
 
 typedef struct {
     float *buffer;
