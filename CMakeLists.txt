@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.10)
+project(AudioThief C)
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+option(BUILD_SHARED_LIBS "Build shared library (DLL)" ON)
+option(BUILD_TESTS "Build unit tests" ON)
+add_subdirectory(lib)

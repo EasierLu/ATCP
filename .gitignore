@@ -53,3 +53,32 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# CMake
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE / Editor
+.vs/
+.vscode/
+.idea/
+*.sln
+*.vcxproj*
+*.suo
+*.user
+*.swp
+*~
