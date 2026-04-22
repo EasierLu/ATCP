@@ -2,7 +2,7 @@
 
 [![Language](https://img.shields.io/badge/language-C99-blue.svg)]()
 [![Build](https://img.shields.io/badge/build-CMake%203.10%2B-green.svg)]()
-[![License](https://img.shields.io/badge/license-see%20LICENSE-lightgrey.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
 ATCP 是一个**纯 C99 实现、零外部依赖**的音频信道数据通信协议栈库。通过标准 3.5mm 音频接口（Speaker Out / Mic In），在 PC 与 MCU 之间建立双向数据通道，实现绕过网络层的隐蔽通信。
 
