@@ -172,6 +172,7 @@ while (1) {
 |------|------|
 | `atcp_get_state(inst)` | 获取当前连接状态 |
 | `atcp_get_stats(inst)` | 获取统计信息（BER、SNR、吞吐量、帧计数等） |
+| `atcp_get_audio_buf_size(inst)` | 获取音频缓冲区所需大小（float 个数），平台层需保证缓冲区不小于此值 |
 
 ## 5. 配置参数
 
