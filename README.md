@@ -10,10 +10,10 @@ ATCP is a **pure C99, zero-dependency** audio-channel data communication protoco
 
 ```
 ┌─────────────────┐      3.5mm Audio Cable      ┌─────────────────┐
-│    Host (PC)     │ ◄─────────────────────────► │   Device (MCU)   │
-│                  │   Speaker Out ──► ADC In    │                  │
-│                  │   Mic In     ◄── DAC Out    │                  │
-└─────────────────┘                              └─────────────────┘
+│    Host (PC)    │ ◄─────────────────────────► │   Device (MCU)  │
+│                 │   Speaker Out ──► ADC In    │                 │
+│                 │   Mic In     ◄── DAC Out    │                 │
+└─────────────────┘                             └─────────────────┘
 ```
 
 ## Features
