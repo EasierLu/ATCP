@@ -25,7 +25,7 @@ atcp_status_t atcp_arq_sender_submit(atcp_arq_sender_t *s, const uint8_t *data, 
     if (idx >= s->window_size)
         return ATCP_ERR_BUFFER_FULL;
 
-    int slot = idx % ATCP_ARQ_MAX_WINDOW;
+    int slot = seq % ATCP_ARQ_MAX_WINDOW;
     memcpy(s->window[slot].data, data, len);
     s->window[slot].data_len = len;
     s->window[slot].seq      = seq;
@@ -66,17 +66,28 @@ atcp_status_t atcp_arq_sender_process_ack(atcp_arq_sender_t *s, uint8_t bitmap, 
     if (!s)
         return ATCP_ERR_INVALID_PARAM;
 
-    /* ACK base_seq 应该匹配发送端 base_seq */
-    if (ack_base_seq != s->base_seq)
-        return ATCP_OK; /* 过期ACK，忽略 */
+    /* 处理前向ACK：接收端的 expected_seq 可能已超前于发送端 base_seq
+     * （当中间的ACK丢失时会发生这种情况）
+     * 需要将 base_seq 追赶到 ack_base_seq */
+    int gap = (ack_base_seq - s->base_seq) & 0xFFFF;
+    if (gap > 0 && gap <= s->window_size) {
+        /* 清除跳过的槽位（这些帧已被接收端确认） */
+        while (s->base_seq != ack_base_seq) {
+            int slot = s->base_seq % ATCP_ARQ_MAX_WINDOW;
+            s->window[slot].valid = ATCP_FALSE;
+            s->send_time[slot] = 0;
+            s->base_seq++;
+        }
+    } else if (gap > s->window_size) {
+        return ATCP_OK; /* 过期或无效ACK，忽略 */
+    }
+    /* gap == 0 时直接处理 bitmap */
 
     /* 收到有效ACK，重置计数并恢复窗口 */
     s->ack_miss_count = 0;
     s->window_size = s->max_window_size;
 
     /* 处理bitmap，清除已确认的块并滑动窗口 */
-    /* 从最低位开始连续扫描，滑动base_seq */
-    int advance = 0;
     for (int i = 0; i < 8; i++) {
         if (bitmap & (1 << i)) {
             int slot = (s->base_seq + i) % ATCP_ARQ_MAX_WINDOW;
@@ -92,13 +103,11 @@ atcp_status_t atcp_arq_sender_process_ack(atcp_arq_sender_t *s, uint8_t bitmap, 
         int slot = s->base_seq % ATCP_ARQ_MAX_WINDOW;
         if (!s->window[slot].valid) {
             s->base_seq++;
-            advance++;
         } else {
             break;
         }
     }
 
-    (void)advance;
     return ATCP_OK;
 }
 
@@ -150,7 +159,7 @@ void atcp_arq_sender_mark_sent(atcp_arq_sender_t *s, uint16_t seq, uint32_t now_
     if (!s) return;
     int idx = (seq - s->base_seq) & 0xFFFF;
     if (idx >= s->window_size) return;
-    int slot = idx % ATCP_ARQ_MAX_WINDOW;
+    int slot = seq % ATCP_ARQ_MAX_WINDOW;
     s->send_time[slot] = now_ms;
 
     /* 更新 next_seq：当调用方绕过 get_next 直接发送时，
@@ -171,7 +180,7 @@ void atcp_arq_receiver_init(atcp_arq_receiver_t *r)
     memset(r, 0, sizeof(*r));
 }
 
-atcp_status_t atcp_arq_receiver_process(atcp_arq_receiver_t *r, const uint8_t *data, int len, uint16_t seq)
+atcp_status_t atcp_arq_receiver_process(atcp_arq_receiver_t *r, const uint8_t *data, int len, uint16_t seq, uint8_t flags)
 {
     if (!r || !data || len <= 0 || len > ATCP_ARQ_MAX_BLOCK_SIZE)
         return ATCP_ERR_INVALID_PARAM;
@@ -184,6 +193,7 @@ atcp_status_t atcp_arq_receiver_process(atcp_arq_receiver_t *r, const uint8_t *d
     memcpy(r->buffer[slot].data, data, len);
     r->buffer[slot].data_len = len;
     r->buffer[slot].seq      = seq;
+    r->buffer[slot].flags    = flags;
     r->buffer[slot].valid    = ATCP_TRUE;
 
     r->rx_bitmap |= (1 << offset);
@@ -214,7 +224,7 @@ atcp_status_t atcp_arq_receiver_get_ordered(atcp_arq_receiver_t *r, uint8_t *dat
     int total = 0;
     int delivered = 0;
 
-    /* 提取连续已收到的块 */
+    /* 提取连续已收到的块，在消息边界（LAST_BLOCK）处停止 */
     while (r->rx_bitmap & 0x01) {
         int slot = r->expected_seq % ATCP_ARQ_MAX_WINDOW;
         if (!r->buffer[slot].valid)
@@ -222,11 +232,16 @@ atcp_status_t atcp_arq_receiver_get_ordered(atcp_arq_receiver_t *r, uint8_t *dat
 
         memcpy(data_out + total, r->buffer[slot].data, r->buffer[slot].data_len);
         total += r->buffer[slot].data_len;
+        uint8_t blk_flags = r->buffer[slot].flags;
         r->buffer[slot].valid = ATCP_FALSE;
         delivered++;
 
         r->expected_seq++;
         r->rx_bitmap >>= 1;
+
+        /* 遇到消息末尾标志，停止提取，留给下次调用 */
+        if (blk_flags & 0x02) /* ATCP_FLAG_LAST_BLOCK */
+            break;
     }
 
     *data_len = total;

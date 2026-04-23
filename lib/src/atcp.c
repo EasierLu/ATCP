@@ -237,7 +237,7 @@ static void inst_process_received_frame(atcp_instance_t *inst,
 
     case ATCP_FRAME_DATA: {
         atcp_heartbeatcp_rx_update(&inst->heartbeat, now);
-        atcp_arq_receiver_process(&inst->arq_receiver, data, data_len, header->seq);
+        atcp_arq_receiver_process(&inst->arq_receiver, data, data_len, header->seq, header->flags);
 
         /* 生成并发送ACK */
         uint16_t ack_base = 0;
@@ -258,17 +258,18 @@ static void inst_process_received_frame(atcp_instance_t *inst,
         atcp_bool_t ack_qpsk = (inst->state == ATCP_STATE_CONNECTING) ? ATCP_TRUE : ATCP_FALSE;
         inst_encode_and_modulate(inst, ack_payload, ack_payload_len, ack_qpsk);
 
-        /* 尝试提取有序数据到接收缓冲区 */
-        if (atcp_arq_receiver_has_complete(&inst->arq_receiver)) {
+        /* 尝试提取有序数据到接收缓冲区（仅当缓冲区已被应用层读完时才提取，保证消息边界） */
+        if (inst->rx_data_len == 0 && atcp_arq_receiver_has_complete(&inst->arq_receiver)) {
             uint8_t ordered[ATCP_ARQ_MAX_BLOCK_SIZE * ATCP_ARQ_MAX_WINDOW];
             int ordered_len = 0;
             if (atcp_arq_receiver_get_ordered(&inst->arq_receiver,
                                             ordered, &ordered_len) == ATCP_OK) {
-                int space = (int)sizeof(inst->rx_data_buf) - inst->rx_data_len;
-                int copy = (ordered_len < space) ? ordered_len : space;
+                int copy = (ordered_len < (int)sizeof(inst->rx_data_buf))
+                         ? ordered_len : (int)sizeof(inst->rx_data_buf);
                 if (copy > 0) {
-                    memcpy(&inst->rx_data_buf[inst->rx_data_len], ordered, copy);
-                    inst->rx_data_len += copy;
+                    memcpy(inst->rx_data_buf, ordered, copy);
+                    inst->rx_data_len = copy;
+                    inst->rx_data_pos = 0;
                 }
             }
         }
@@ -453,6 +454,23 @@ atcp_status_t atcp_recv(atcp_instance_t *inst, uint8_t *buf, size_t buf_len, siz
     if (inst->state != ATCP_STATE_CONNECTED) return ATCP_ERR_NOT_CONNECTED;
 
     *received = 0;
+
+    /* 若缓冲区已空，尝试从 ARQ 接收端提取下一条完整消息 */
+    if (inst->rx_data_len == 0 && atcp_arq_receiver_has_complete(&inst->arq_receiver)) {
+        uint8_t ordered[ATCP_ARQ_MAX_BLOCK_SIZE * ATCP_ARQ_MAX_WINDOW];
+        int ordered_len = 0;
+        if (atcp_arq_receiver_get_ordered(&inst->arq_receiver,
+                                        ordered, &ordered_len) == ATCP_OK) {
+            int copy = (ordered_len < (int)sizeof(inst->rx_data_buf))
+                     ? ordered_len : (int)sizeof(inst->rx_data_buf);
+            if (copy > 0) {
+                memcpy(inst->rx_data_buf, ordered, copy);
+                inst->rx_data_len = copy;
+                inst->rx_data_pos = 0;
+            }
+        }
+    }
+
     int avail = inst->rx_data_len - inst->rx_data_pos;
     if (avail <= 0) return ATCP_ERR_BUFFER_EMPTY;
 
@@ -526,12 +544,23 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
             atcp_channel_estimate(rx_train, train_ref, n_subs, inst->channel_h);
             inst->channel_valid = ATCP_TRUE;
 
-            /* 解调所有可用的数据符号 */
-            uint8_t bits[8192];
+            /* 解调数据符号（仅解调当前帧期望的数据符号数） */
+            uint8_t bits[16384];
             int total_bits = 0;
             int demod_end = data_offset;
 
-            while (demod_end + symbol_samples <= inst->audio_in_len) {
+            /* 计算当前帧期望的数据 OFDM 符号数 */
+            int qam_cur = (inst->state == ATCP_STATE_CONNECTING) ? 4 : cfg->qam_order;
+            int bps = 0;
+            { int tmp = qam_cur; while (tmp > 1) { bps++; tmp >>= 1; } }
+            if (bps < 1) bps = 1;
+            int rs_block_bits = 255 * 8;
+            int qam_sym_needed = (rs_block_bits + bps - 1) / bps;
+            int n_data_expected = (qam_sym_needed + n_subs - 1) / n_subs;
+            int demod_count = 0;
+
+            while (demod_end + symbol_samples <= inst->audio_in_len
+                   && demod_count < n_data_expected) {
                 atcp_complex_t rx_data[256];
                 atcp_ofdm_demodulate(&inst->audio_in_buf[demod_end], cfg,
                                    rx_data, n_subs);
@@ -548,6 +577,7 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
                                    &bits[total_bits], &n_bits);
                 total_bits += n_bits;
                 demod_end += symbol_samples;
+                demod_count++;
             }
 
             /* 尝试 RS 解码 */
@@ -581,7 +611,15 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
                         }
                     }
                     if (!frame_ok) {
-                        /* RS解码失败 → 坏帧，丢弃并继续 */
+                        /* RS解码失败 → 坏帧，尝试消耗整个帧（可能是 QPSK 编码的过渡帧） */
+                        /* QPSK 帧有 6 个数据符号，QAM-16 有 3 个。取较大值以确保完全跳过 */
+                        int qpsk_bps = 2;
+                        int qpsk_sym_needed = (rs_block_bits + qpsk_bps - 1) / qpsk_bps;
+                        int qpsk_data_expected = (qpsk_sym_needed + n_subs - 1) / n_subs;
+                        int max_data = (qpsk_data_expected > n_data_expected)
+                                     ? qpsk_data_expected : n_data_expected;
+                        int skip_end = data_offset + max_data * symbol_samples;
+                        if (skip_end > demod_end) demod_end = skip_end;
                         frame_ok = 1; /* 标记为已处理以触发 reset */
                     }
                 }
@@ -721,58 +759,81 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
             atcp_heartbeatcp_tx_update(&inst->heartbeat, now);
         }
 
-        /* ARQ超时重传检查（每 tick 最多重传一帧，避免覆盖） */
-        if (inst->audio_out_len == 0) {
-            atcp_arq_block_t retx[ATCP_ARQ_MAX_WINDOW];
-            int n_retx = atcp_arq_sender_check_timeout(&inst->arq_sender, now,
-                                                      retx, ATCP_ARQ_MAX_WINDOW);
-            if (n_retx > 0) {
+        /* ARQ超时重传 + 新数据发送循环
+         * 每帧编码调制后立即刷新音频输出，限制每 tick 最多 3 帧避免过载 */
+        for (int tx_burst = 0; tx_burst < 3; tx_burst++) {
+            /* 先刷新音频输出缓冲区 */
+            if (inst->audio_out_len > 0 && inst->audio_out_pos < inst->audio_out_len) {
+                int to_wr = inst->audio_out_len - inst->audio_out_pos;
+                if (inst->platform.audio_write) {
+                    int wr = inst->platform.audio_write(
+                        &inst->audio_out_buf[inst->audio_out_pos],
+                        to_wr / 2, 2, inst->platform.user_data);
+                    if (wr > 0) inst->audio_out_pos += wr * 2;
+                    else if (wr < 0) { inst->audio_out_len = 0; inst->audio_out_pos = 0; break; }
+                }
+                if (inst->audio_out_pos >= inst->audio_out_len) {
+                    inst->audio_out_len = 0;
+                    inst->audio_out_pos = 0;
+                }
+            }
+            if (inst->audio_out_len > 0) break; /* 写不完则停止突发 */
+
+            /* 优先处理重传 */
+            {
+                atcp_arq_block_t retx[ATCP_ARQ_MAX_WINDOW];
+                int n_retx = atcp_arq_sender_check_timeout(&inst->arq_sender, now,
+                                                          retx, ATCP_ARQ_MAX_WINDOW);
+                if (n_retx > 0) {
+                    uint8_t payload[300];
+                    int payload_len = 0;
+                    atcp_frame_build_payload(ATCP_FRAME_DATA, retx[0].seq,
+                                           retx[0].data, (uint16_t)retx[0].data_len, 0,
+                                           payload, &payload_len);
+                    inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
+                    inst->stats.retransmit_count++;
+                    continue; /* 刷新后继续 */
+                }
+            }
+
+            /* 发送新数据 */
+            if (inst->tx_data_len > 0 && inst->tx_data_pos < inst->tx_data_len
+                && !atcp_arq_sender_window_full(&inst->arq_sender)) {
+                int remaining = inst->tx_data_len - inst->tx_data_pos;
+                int chunk = (remaining < ATCP_ARQ_MAX_BLOCK_SIZE)
+                            ? remaining : ATCP_ARQ_MAX_BLOCK_SIZE;
+
+                atcp_arq_sender_submit(&inst->arq_sender,
+                                     &inst->tx_data_buf[inst->tx_data_pos],
+                                     chunk, inst->tx_seq);
+
                 uint8_t payload[300];
                 int payload_len = 0;
-                atcp_frame_build_payload(ATCP_FRAME_DATA, retx[0].seq,
-                                       retx[0].data, (uint16_t)retx[0].data_len, 0,
+                uint8_t flags = 0;
+                if (inst->tx_data_pos + chunk >= inst->tx_data_len) {
+                    flags |= ATCP_FLAG_LAST_BLOCK;
+                }
+                atcp_frame_build_payload(ATCP_FRAME_DATA, inst->tx_seq,
+                                       &inst->tx_data_buf[inst->tx_data_pos],
+                                       (uint16_t)chunk, flags,
                                        payload, &payload_len);
                 inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
-                inst->stats.retransmit_count++;
+
+                uint32_t send_now = inst->platform.get_time_ms(inst->platform.user_data);
+                atcp_arq_sender_mark_sent(&inst->arq_sender, inst->tx_seq, send_now);
+
+                inst->tx_data_pos += chunk;
+                inst->tx_seq++;
+                inst->stats.frames_sent++;
+
+                if (inst->tx_data_pos >= inst->tx_data_len) {
+                    inst->tx_data_len = 0;
+                    inst->tx_data_pos = 0;
+                }
+                continue; /* 还有数据就继续 */
             }
-        }
 
-        /* 发送待发数据（仅当缓冲区空时） */
-        if (inst->audio_out_len == 0
-            && inst->tx_data_len > 0 && inst->tx_data_pos < inst->tx_data_len
-            && !atcp_arq_sender_window_full(&inst->arq_sender)) {
-            int remaining = inst->tx_data_len - inst->tx_data_pos;
-            int chunk = (remaining < ATCP_ARQ_MAX_BLOCK_SIZE)
-                        ? remaining : ATCP_ARQ_MAX_BLOCK_SIZE;
-
-            atcp_arq_sender_submit(&inst->arq_sender,
-                                 &inst->tx_data_buf[inst->tx_data_pos],
-                                 chunk, inst->tx_seq);
-
-            uint8_t payload[300];
-            int payload_len = 0;
-            uint8_t flags = 0;
-            if (inst->tx_data_pos + chunk >= inst->tx_data_len) {
-                flags |= ATCP_FLAG_LAST_BLOCK;
-            }
-            atcp_frame_build_payload(ATCP_FRAME_DATA, inst->tx_seq,
-                                   &inst->tx_data_buf[inst->tx_data_pos],
-                                   (uint16_t)chunk, flags,
-                                   payload, &payload_len);
-            inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
-
-            uint32_t send_now = inst->platform.get_time_ms(inst->platform.user_data);
-            atcp_arq_sender_mark_sent(&inst->arq_sender, inst->tx_seq, send_now);
-
-            inst->tx_data_pos += chunk;
-            inst->tx_seq++;
-            inst->stats.frames_sent++;
-
-            /* 如果所有数据已入队 */
-            if (inst->tx_data_pos >= inst->tx_data_len) {
-                inst->tx_data_len = 0;
-                inst->tx_data_pos = 0;
-            }
+            break; /* 无重传也无新数据，退出突发 */
         }
     }
 

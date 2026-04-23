@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- 将 ATCP 原生 DLL 复制到输出目录 -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\build\lib\Release\atcp.dll"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\..\build\lib\Release\atcp.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>atcp.dll</Link>
+    </None>
+    <None Include="$(MSBuildThisFileDirectory)..\..\build\lib\Debug\atcp.dll"
+          Condition="!Exists('$(MSBuildThisFileDirectory)..\..\build\lib\Release\atcp.dll') And Exists('$(MSBuildThisFileDirectory)..\..\build\lib\Debug\atcp.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>atcp.dll</Link>
+    </None>
+  </ItemGroup>
+
+</Project>

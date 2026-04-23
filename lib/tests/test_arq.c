@@ -49,7 +49,7 @@ int main(void)
             TEST_ASSERT(block.seq == (uint16_t)i, "seq should match");
 
             /* receiver 接收 */
-            atcp_arq_receiver_process(&receiver, block.data, block.data_len, block.seq);
+            atcp_arq_receiver_process(&receiver, block.data, block.data_len, block.seq, 0);
         }
 
         /* receiver 生成 bitmap */
@@ -87,9 +87,9 @@ int main(void)
         }
 
         /* receiver只收到0,1,3 (跳过2) */
-        atcp_arq_receiver_process(&receiver, blocks[0].data, blocks[0].data_len, blocks[0].seq);
-        atcp_arq_receiver_process(&receiver, blocks[1].data, blocks[1].data_len, blocks[1].seq);
-        atcp_arq_receiver_process(&receiver, blocks[3].data, blocks[3].data_len, blocks[3].seq);
+        atcp_arq_receiver_process(&receiver, blocks[0].data, blocks[0].data_len, blocks[0].seq, 0);
+        atcp_arq_receiver_process(&receiver, blocks[1].data, blocks[1].data_len, blocks[1].seq, 0);
+        atcp_arq_receiver_process(&receiver, blocks[3].data, blocks[3].data_len, blocks[3].seq, 0);
 
         /* bitmap: bit0=1(seq0), bit1=1(seq1), bit2=0(seq2 missing), bit3=1(seq3) => 0x0B */
         uint16_t base_seq;
@@ -187,15 +187,15 @@ int main(void)
         uint8_t d1[4] = {0x20, 0x21, 0x22, 0x23};
         uint8_t d2[4] = {0x30, 0x31, 0x32, 0x33};
 
-        atcp_arq_receiver_process(&receiver, d1, 4, 1);  /* seq=1 先到 */
+        atcp_arq_receiver_process(&receiver, d1, 4, 1, 0);  /* seq=1 先到 */
         /* expected_seq=0, 所以seq=1到了但不完整 */
 
-        atcp_arq_receiver_process(&receiver, d0, 4, 0);  /* seq=0 到达 */
+        atcp_arq_receiver_process(&receiver, d0, 4, 0, 0);  /* seq=0 到达 */
         /* 现在seq=0到了, has_complete应该为true */
         TEST_ASSERT(atcp_arq_receiver_has_complete(&receiver),
                     "should have complete data after seq 0 arrives");
 
-        atcp_arq_receiver_process(&receiver, d2, 4, 2);  /* seq=2 到达 */
+        atcp_arq_receiver_process(&receiver, d2, 4, 2, 0);  /* seq=2 到达 */
 
         /* 按序取出 */
         uint8_t out_buf[256];
@@ -208,6 +208,42 @@ int main(void)
         TEST_ASSERT(memcmp(out_buf, d0, 4) == 0, "first block should be d0");
         TEST_ASSERT(memcmp(out_buf + 4, d1, 4) == 0, "second block should be d1");
         TEST_ASSERT(memcmp(out_buf + 8, d2, 4) == 0, "third block should be d2");
+    }
+
+    /* Test 8: LAST_BLOCK 消息边界 */
+    printf("--- Test 8: Message boundary (LAST_BLOCK) ---\n");
+    {
+        atcp_arq_receiver_t receiver;
+        atcp_arq_receiver_init(&receiver);
+
+        /* 两条消息: msg1=[seq0,seq1(LAST)], msg2=[seq2(LAST)] */
+        uint8_t d0[4] = {0xA0, 0xA1, 0xA2, 0xA3};
+        uint8_t d1[4] = {0xB0, 0xB1, 0xB2, 0xB3};
+        uint8_t d2[4] = {0xC0, 0xC1, 0xC2, 0xC3};
+
+        atcp_arq_receiver_process(&receiver, d0, 4, 0, 0);            /* msg1 block 0 */
+        atcp_arq_receiver_process(&receiver, d1, 4, 1, 0x02);         /* msg1 block 1 (LAST_BLOCK) */
+        atcp_arq_receiver_process(&receiver, d2, 4, 2, 0x02);         /* msg2 block 0 (LAST_BLOCK) */
+
+        /* 第一次 get_ordered 应只返回 msg1 */
+        uint8_t out_buf[256];
+        int out_len = 0;
+        atcp_status_t s = atcp_arq_receiver_get_ordered(&receiver, out_buf, &out_len);
+        TEST_ASSERT(s == ATCP_OK, "first get_ordered should succeed");
+        TEST_ASSERT(out_len == 8, "msg1 should be 8 bytes (2 blocks x 4)");
+        TEST_ASSERT(memcmp(out_buf, d0, 4) == 0, "msg1 first block");
+        TEST_ASSERT(memcmp(out_buf + 4, d1, 4) == 0, "msg1 second block");
+
+        /* 第二次 get_ordered 应返回 msg2 */
+        out_len = 0;
+        s = atcp_arq_receiver_get_ordered(&receiver, out_buf, &out_len);
+        TEST_ASSERT(s == ATCP_OK, "second get_ordered should succeed");
+        TEST_ASSERT(out_len == 4, "msg2 should be 4 bytes (1 block)");
+        TEST_ASSERT(memcmp(out_buf, d2, 4) == 0, "msg2 data");
+
+        /* 第三次应返回空 */
+        TEST_ASSERT(!atcp_arq_receiver_has_complete(&receiver),
+                    "no more complete data");
     }
 
     /* Test 6: ACK编解码 */

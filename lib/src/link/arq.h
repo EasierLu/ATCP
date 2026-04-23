@@ -10,6 +10,7 @@ typedef struct {
     uint8_t data[ATCP_ARQ_MAX_BLOCK_SIZE];
     int data_len;
     uint16_t seq;
+    uint8_t flags;       /* 帧标志位（含 ATCP_FLAG_LAST_BLOCK 等） */
     atcp_bool_t valid;
 } atcp_arq_block_t;
 
@@ -48,7 +49,7 @@ void atcp_arq_sender_mark_sent(atcp_arq_sender_t *s, uint16_t seq, uint32_t now_
 
 /* 接收端 */
 void atcp_arq_receiver_init(atcp_arq_receiver_t *r);
-atcp_status_t atcp_arq_receiver_process(atcp_arq_receiver_t *r, const uint8_t *data, int len, uint16_t seq);
+atcp_status_t atcp_arq_receiver_process(atcp_arq_receiver_t *r, const uint8_t *data, int len, uint16_t seq, uint8_t flags);
 uint8_t atcp_arq_receiver_generate_bitmap(atcp_arq_receiver_t *r, uint16_t *base_seq_out);
 atcp_bool_t atcp_arq_receiver_has_complete(const atcp_arq_receiver_t *r);
 atcp_status_t atcp_arq_receiver_get_ordered(atcp_arq_receiver_t *r, uint8_t *data_out, int *data_len);

@@ -63,7 +63,7 @@ static inline atcp_config_t atcp_config_default(void)
     cfg.sample_rate         = 44100;
     cfg.window_size         = 4;
     cfg.pilot_interval      = 10;
-    cfg.ack_timeout_ms      = 3000;
+    cfg.ack_timeout_ms      = 500;
     cfg.max_ack_miss        = 3;
     cfg.ack_repeat          = 2;
     cfg.heartbeatcp_interval_ms = 3000;
