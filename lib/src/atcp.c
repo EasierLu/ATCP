@@ -73,11 +73,11 @@ struct atcp_instance {
     int rx_data_pos;
 
     /* 音频I/O缓冲区（动态分配，大小由配置参数决定） */
-    float *audio_in_buf;
+    float *audio_in_buf;       /* 音频输入底层存储（动态分配） */
+    atcp_ringbuf_t audio_in_ring;  /* 音频输入环形缓冲区 */
+    int audio_in_sync_count;   /* 已送入 frame_sync 的采样数（相对于 ring tail） */
     float *audio_out_buf;
     int audio_buf_size;    /* 每个缓冲区的 float 元素数 */
-    int audio_in_len;      /* 输入累积缓冲区已用长度 */
-    int audio_in_sync_pos; /* 已送入 frame_sync 的位置 */
     int audio_out_len;
     int audio_out_pos;
 
@@ -337,6 +337,8 @@ atcp_instance_t *atcp_create(const atcp_config_t *config, const atcp_platform_t 
         free(inst);
         return NULL;
     }
+    atcp_ringbuf_init(&inst->audio_in_ring, inst->audio_in_buf, inst->audio_buf_size);
+    inst->audio_in_sync_count = 0;
 
     /* 初始化各层 */
     atcp_rs_init(&inst->rs, inst->config.rs_nsym);
@@ -433,8 +435,8 @@ atcp_status_t atcp_disconnect(atcp_instance_t *inst)
     inst->tx_data_pos = 0;
     inst->rx_data_len = 0;
     inst->rx_data_pos = 0;
-    inst->audio_in_len = 0;
-    inst->audio_in_sync_pos = 0;
+    atcp_ringbuf_reset(&inst->audio_in_ring);
+    inst->audio_in_sync_count = 0;
     inst->audio_out_len = 0;
     inst->audio_out_pos = 0;
 
@@ -495,43 +497,51 @@ atcp_status_t atcp_recv(atcp_instance_t *inst, uint8_t *buf, size_t buf_len, siz
     return ATCP_OK;
 }
 
-atcp_status_t atcp_tick(atcp_instance_t *inst)
+/* ================================================================
+ * atcp_tick() 子函数
+ * ================================================================ */
+
+/* 从平台读取音频采样并进行AGC处理（累积模式） */
+static void tick_audio_input(atcp_instance_t *inst)
 {
-    if (!inst) return ATCP_ERR_INVALID_PARAM;
-
-    const atcp_config_t *cfg = &inst->config;
-    uint32_t now = 0;
-    if (inst->platform.get_time_ms) {
-        now = inst->platform.get_time_ms(inst->platform.user_data);
-    }
-
-    /* === 1. 从平台读取音频采样（累积模式） === */
-    int symbol_samples = atcp_ofdm_symbol_samples(cfg);
-    int space = inst->audio_buf_size - inst->audio_in_len;
+    int space = atcp_ringbuf_free_space(&inst->audio_in_ring);
     if (space > 0 && inst->platform.audio_read) {
-        int got = inst->platform.audio_read(
-            &inst->audio_in_buf[inst->audio_in_len], space, 1,
-            inst->platform.user_data);
-        if (got > space) got = space;  /* 防止回调返回值超出缓冲区剩余空间 */
+        /* 读到临时缓冲区，因为环形缓冲写入可能跨边界 */
+        float tmp[1024];
+        int req = (space < 1024) ? space : 1024;
+        int got = inst->platform.audio_read(tmp, req, 1, inst->platform.user_data);
         if (got > 0) {
-            /* === 2. AGC处理（仅处理新数据） === */
-            atcp_agc_process(&inst->agc,
-                           &inst->audio_in_buf[inst->audio_in_len], got);
-            inst->audio_in_len += got;
+            if (got > space) got = space;  /* 防止平台返回超额数据 */
+            atcp_agc_process(&inst->agc, tmp, got);
+            atcp_ringbuf_write(&inst->audio_in_ring, tmp, got);
         }
     }
+}
 
-    /* === 3. 帧同步：将未处理的新数据送入 === */
+/* 帧同步馈入、检测、解调、RS解码、帧处理、缓冲区管理 */
+static void tick_frame_sync_and_demod(atcp_instance_t *inst, uint32_t now)
+{
+    const atcp_config_t *cfg = &inst->config;
+    int symbol_samples = atcp_ofdm_symbol_samples(cfg);
+
+    /* 帧同步：将未处理的新数据送入 */
+    int ring_avail = atcp_ringbuf_available(&inst->audio_in_ring);
     if (!atcp_frame_sync_detected(&inst->frame_sync)
-        && inst->audio_in_sync_pos < inst->audio_in_len) {
-        atcp_frame_sync_feed_batch(
-            &inst->frame_sync,
-            &inst->audio_in_buf[inst->audio_in_sync_pos],
-            inst->audio_in_len - inst->audio_in_sync_pos);
-        inst->audio_in_sync_pos = inst->audio_in_len;
+        && inst->audio_in_sync_count < ring_avail) {
+        int new_samples = ring_avail - inst->audio_in_sync_count;
+        float sync_tmp[1024];
+        int offset = inst->audio_in_sync_count;
+        while (new_samples > 0) {
+            int chunk = (new_samples < 1024) ? new_samples : 1024;
+            atcp_ringbuf_peek(&inst->audio_in_ring, sync_tmp, chunk, offset);
+            atcp_frame_sync_feed_batch(&inst->frame_sync, sync_tmp, chunk);
+            offset += chunk;
+            new_samples -= chunk;
+        }
+        inst->audio_in_sync_count = ring_avail;
     }
 
-    /* === 4. 检测到帧 → 尝试解调 === */
+    /* 检测到帧 → 尝试解调 */
     if (atcp_frame_sync_detected(&inst->frame_sync)) {
         int n_subs = atcp_ofdm_num_subcarriers(cfg);
         /* frame_offset 自上次 reset 以来的全局采样索引 = audio_in_buf 中的位置 */
@@ -543,11 +553,13 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
         int data_offset  = frame_pos + cfg->n_train * symbol_samples;
 
         /* 检查是否有足够数据做训练符号解调 */
-        if (train_offset + symbol_samples <= inst->audio_in_len) {
+        if (train_offset + symbol_samples <= atcp_ringbuf_available(&inst->audio_in_ring)) {
+            float train_tmp[1024];
+            atcp_ringbuf_peek(&inst->audio_in_ring, train_tmp, symbol_samples, train_offset);
             atcp_complex_t train_ref[256];
             atcp_training_generate(cfg->train_seed, n_subs, train_ref);
             atcp_complex_t rx_train[256];
-            atcp_ofdm_demodulate(&inst->audio_in_buf[train_offset], cfg,
+            atcp_ofdm_demodulate(train_tmp, cfg,
                                rx_train, n_subs);
             atcp_channel_estimate(rx_train, train_ref, n_subs, inst->channel_h);
             inst->channel_valid = ATCP_TRUE;
@@ -567,10 +579,12 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
             int n_data_expected = (qam_sym_needed + n_subs - 1) / n_subs;
             int demod_count = 0;
 
-            while (demod_end + symbol_samples <= inst->audio_in_len
+            while (demod_end + symbol_samples <= atcp_ringbuf_available(&inst->audio_in_ring)
                    && demod_count < n_data_expected) {
+                float demod_tmp[1024];
+                atcp_ringbuf_peek(&inst->audio_in_ring, demod_tmp, symbol_samples, demod_end);
                 atcp_complex_t rx_data[256];
-                atcp_ofdm_demodulate(&inst->audio_in_buf[demod_end], cfg,
+                atcp_ofdm_demodulate(demod_tmp, cfg,
                                    rx_data, n_subs);
                 atcp_complex_t eq_data[256];
                 if (inst->channel_valid) {
@@ -636,28 +650,29 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
             /* else: total_bits < 8, 数据不够，等下一 tick */
 
             if (frame_ok) {
-                /* 压缩缓冲区：移除已处理的数据 */
+                /* 丢弃已处理数据（环形缓冲区核心收益：无需 memmove） */
                 int consumed = demod_end;
-                int remaining = inst->audio_in_len - consumed;
-                if (remaining > 0) {
-                    memmove(inst->audio_in_buf,
-                           &inst->audio_in_buf[consumed],
-                           (size_t)remaining * sizeof(float));
-                }
-                inst->audio_in_len = remaining;
-                inst->audio_in_sync_pos = 0;
+                atcp_ringbuf_read(&inst->audio_in_ring, NULL, consumed);
+                inst->audio_in_sync_count = 0;
                 atcp_frame_sync_reset(&inst->frame_sync);
                 /* 将剩余数据重新送入 frame_sync */
+                int remaining = atcp_ringbuf_available(&inst->audio_in_ring);
                 if (remaining > 0) {
-                    atcp_frame_sync_feed_batch(&inst->frame_sync,
-                                             inst->audio_in_buf, remaining);
-                    inst->audio_in_sync_pos = remaining;
+                    float resync_tmp[1024];
+                    int off = 0;
+                    while (off < remaining) {
+                        int chunk = (remaining - off < 1024) ? (remaining - off) : 1024;
+                        atcp_ringbuf_peek(&inst->audio_in_ring, resync_tmp, chunk, off);
+                        atcp_frame_sync_feed_batch(&inst->frame_sync, resync_tmp, chunk);
+                        off += chunk;
+                    }
+                    inst->audio_in_sync_count = remaining;
                 }
             }
-        } else if (inst->audio_in_len >= inst->audio_buf_size) {
+        } else if (atcp_ringbuf_free_space(&inst->audio_in_ring) == 0) {
             /* 缓冲区满但训练符号位置超出范围 → 丢弃并重置 */
-            inst->audio_in_len = 0;
-            inst->audio_in_sync_pos = 0;
+            atcp_ringbuf_reset(&inst->audio_in_ring);
+            inst->audio_in_sync_count = 0;
             atcp_frame_sync_reset(&inst->frame_sync);
         }
         /* else: 等待更多数据 */
@@ -665,191 +680,158 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
 
     /* 防止缓冲区无限累积（无帧检测时的安全阀） */
     if (!atcp_frame_sync_detected(&inst->frame_sync)
-        && inst->audio_in_len >= inst->audio_buf_size) {
+        && atcp_ringbuf_free_space(&inst->audio_in_ring) == 0) {
         /* 保留最后 symbol_samples 个采样（可能包含部分帧前导） */
+        int total = atcp_ringbuf_available(&inst->audio_in_ring);
         int keep = symbol_samples;
-        int discard = inst->audio_in_len - keep;
+        int discard = total - keep;
         if (discard > 0) {
-            memmove(inst->audio_in_buf,
-                   &inst->audio_in_buf[discard],
-                   (size_t)keep * sizeof(float));
-            inst->audio_in_len = keep;
-            inst->audio_in_sync_pos = 0;
+            atcp_ringbuf_read(&inst->audio_in_ring, NULL, discard);
+            inst->audio_in_sync_count = 0;
             atcp_frame_sync_reset(&inst->frame_sync);
-            atcp_frame_sync_feed_batch(&inst->frame_sync,
-                                     inst->audio_in_buf, keep);
-            inst->audio_in_sync_pos = keep;
+            float resync_tmp[1024];
+            int off = 0;
+            while (off < keep) {
+                int chunk = (keep - off < 1024) ? (keep - off) : 1024;
+                atcp_ringbuf_peek(&inst->audio_in_ring, resync_tmp, chunk, off);
+                atcp_frame_sync_feed_batch(&inst->frame_sync, resync_tmp, chunk);
+                off += chunk;
+            }
+            inst->audio_in_sync_count = keep;
         }
     }
+}
 
-    /* === 5. 握手 Phase3 链路质量测试自动推进 === */
-    if (inst->state == ATCP_STATE_CONNECTING &&
-        atcp_handshake_get_state(&inst->handshake) == ATCP_HS_PHASE3_TESTING) {
-        /* 自动报告完美链路质量（当前模拟器无噪声信道）
-         * TODO: 实际系统中应发送测试帧并计算真实 BER/丢包率 */
-        atcp_handshake_report_quality(&inst->handshake, 0.0f, 0.0f);
-        (void)0; /* Phase3 auto-pass */
+/* 握手自动推进（仅在 CONNECTING 状态下活跃） */
+static void tick_handshake(atcp_instance_t *inst, uint32_t now)
+{
+    if (inst->state != ATCP_STATE_CONNECTING) return;
 
-        /* Phase3 通过后需发送 Phase4 消息 */
-        if (atcp_handshake_get_state(&inst->handshake) == ATCP_HS_PHASE3_DONE) {
-            uint8_t p4_msg[256];
-            int p4_len = 0;
-            atcp_handshake_params_t neg = inst->handshake.negotiated;
-            /* 发送协商结果作为 Phase4 确认 */
-            uint8_t p4_data[14];
-            p4_data[0] = (uint8_t)(neg.sample_rate >> 24);
-            p4_data[1] = (uint8_t)(neg.sample_rate >> 16);
-            p4_data[2] = (uint8_t)(neg.sample_rate >> 8);
-            p4_data[3] = (uint8_t)(neg.sample_rate);
-            p4_data[4] = (uint8_t)(neg.qam_order);
-            p4_data[5] = (uint8_t)(neg.n_fft >> 8);
-            p4_data[6] = (uint8_t)(neg.n_fft);
-            p4_data[7] = (uint8_t)(neg.cp_len >> 8);
-            p4_data[8] = (uint8_t)(neg.cp_len);
-            p4_data[9] = (uint8_t)(neg.sub_low >> 8);
-            p4_data[10] = (uint8_t)(neg.sub_low);
-            p4_data[11] = (uint8_t)(neg.sub_high >> 8);
-            p4_data[12] = (uint8_t)(neg.sub_high);
-            p4_data[13] = (uint8_t)(neg.rs_nsym);
+    uint8_t hs_payload[300];
+    int hs_len = 0;
+    atcp_bool_t hs_changed = ATCP_FALSE;
+    atcp_handshake_tick(&inst->handshake, hs_payload, &hs_len, &hs_changed);
+    if (hs_len > 0) {
+        inst_encode_and_modulate(inst, hs_payload, hs_len, ATCP_TRUE);
+    }
+    if (hs_changed && atcp_handshake_get_state(&inst->handshake) == ATCP_HS_CONNECTED) {
+        inst->state = ATCP_STATE_CONNECTED;
+        atcp_heartbeatcp_rx_update(&inst->heartbeat, now);
+        atcp_handshake_get_config(&inst->handshake, &inst->config);
+    }
+}
 
-            /* 调用 handshake_process 推动状态机进入 PHASE4 */
-            atcp_handshake_process(&inst->handshake, p4_data, 14, p4_msg, &p4_len);
-            (void)0; /* Phase4 step1 */
+/* 已连接状态：心跳检查、ARQ重传、新数据发送（含音频输出刷新）
+ * 返回 ATCP_ERR_TIMEOUT 若心跳超时，否则 ATCP_OK */
+static atcp_status_t tick_connected(atcp_instance_t *inst, uint32_t now)
+{
+    if (inst->state != ATCP_STATE_CONNECTED) return ATCP_OK;
 
-            if (p4_len > 0) {
-                uint8_t payload[300];
-                int payload_len = 0;
-                atcp_frame_build_payload(ATCP_FRAME_HANDSHAKE, 0,
-                                       p4_msg, (uint16_t)p4_len, 0,
-                                       payload, (int)sizeof(payload), &payload_len);
-                inst_encode_and_modulate(inst, payload, payload_len, ATCP_TRUE);
-            }
-
-            /* PHASE4_RECEIVED 需再推进一步到 CONNECTED
-             * （模拟器中两端同时 auto-pass，无需等待对端确认） */
-            if (atcp_handshake_get_state(&inst->handshake) == ATCP_HS_PHASE4_RECEIVED) {
-                uint8_t dummy_resp[256];
-                int dummy_len = 0;
-                atcp_handshake_process(&inst->handshake, p4_data, 14,
-                                     dummy_resp, &dummy_len);
-                (void)0; /* Phase4 step2 */
-            }
-
-            /* 检查是否已完成握手 */
-            if (atcp_handshake_get_state(&inst->handshake) == ATCP_HS_CONNECTED) {
-                inst->state = ATCP_STATE_CONNECTED;
-                atcp_heartbeatcp_rx_update(&inst->heartbeat, now);
-                atcp_handshake_get_config(&inst->handshake, &inst->config);
+    /* 心跳检查 */
+    if (atcp_heartbeatcp_is_timeout(&inst->heartbeat, now)) {
 #ifdef ATCP_DEBUG
-                fprintf(stderr, "[ATCP-DBG] === HANDSHAKE CONNECTED ===\n");
+        fprintf(stderr, "[ATCP] HEARTBEAT TIMEOUT: now=%u last_rx=%u diff=%u timeout=%u\n",
+                now, inst->heartbeat.last_rx_time_ms,
+                now - inst->heartbeat.last_rx_time_ms,
+                inst->heartbeat.timeout_ms);
 #endif
-            }
-        }
+        inst->state = ATCP_STATE_DISCONNECTED;
+        return ATCP_ERR_TIMEOUT;
     }
 
-    /* === 6. 仅在CONNECTED状态下处理心跳和ARQ === */
-    if (inst->state == ATCP_STATE_CONNECTED) {
-        /* 心跳检查 */
-        if (atcp_heartbeatcp_is_timeout(&inst->heartbeat, now)) {
-#ifdef ATCP_DEBUG
-            fprintf(stderr, "[ATCP] HEARTBEAT TIMEOUT: now=%u last_rx=%u diff=%u timeout=%u\n",
-                    now, inst->heartbeat.last_rx_time_ms,
-                    now - inst->heartbeat.last_rx_time_ms,
-                    inst->heartbeat.timeout_ms);
-#endif
-            inst->state = ATCP_STATE_DISCONNECTED;
-            return ATCP_ERR_TIMEOUT;
-        }
+    if (inst->audio_out_len == 0 && atcp_heartbeatcp_need_send(&inst->heartbeat, now)) {
+        /* 发送心跳帧（仅当缓冲区空时，避免覆盖 ACK） */
+        uint8_t hb_payload[64];
+        int hb_len = 0;
+        atcp_frame_build_payload(ATCP_FRAME_HEARTBEAT, 0, NULL, 0, 0,
+                               hb_payload, (int)sizeof(hb_payload), &hb_len);
+        inst_encode_and_modulate(inst, hb_payload, hb_len, ATCP_FALSE);
+        atcp_heartbeatcp_tx_update(&inst->heartbeat, now);
+    }
 
-        if (inst->audio_out_len == 0 && atcp_heartbeatcp_need_send(&inst->heartbeat, now)) {
-            /* 发送心跳帧（仅当缓冲区空时，避免覆盖 ACK） */
-            uint8_t hb_payload[64];
-            int hb_len = 0;
-            atcp_frame_build_payload(ATCP_FRAME_HEARTBEAT, 0, NULL, 0, 0,
-                                   hb_payload, (int)sizeof(hb_payload), &hb_len);
-            inst_encode_and_modulate(inst, hb_payload, hb_len, ATCP_FALSE);
-            atcp_heartbeatcp_tx_update(&inst->heartbeat, now);
-        }
-
-        /* ARQ超时重传 + 新数据发送循环
-         * 每帧编码调制后立即刷新音频输出，限制每 tick 最多 3 帧避免过载 */
-        for (int tx_burst = 0; tx_burst < 3; tx_burst++) {
-            /* 先刷新音频输出缓冲区 */
-            if (inst->audio_out_len > 0 && inst->audio_out_pos < inst->audio_out_len) {
-                int to_wr = inst->audio_out_len - inst->audio_out_pos;
-                if (inst->platform.audio_write) {
-                    int wr = inst->platform.audio_write(
-                        &inst->audio_out_buf[inst->audio_out_pos],
-                        to_wr / 2, 2, inst->platform.user_data);
-                    if (wr > 0) inst->audio_out_pos += wr * 2;
-                    else if (wr < 0) { inst->audio_out_len = 0; inst->audio_out_pos = 0; break; }
-                }
-                if (inst->audio_out_pos >= inst->audio_out_len) {
-                    inst->audio_out_len = 0;
-                    inst->audio_out_pos = 0;
-                }
+    /* ARQ超时重传 + 新数据发送循环
+     * 每帧编码调制后立即刷新音频输出，限制每 tick 最多 3 帧避免过载 */
+    for (int tx_burst = 0; tx_burst < 3; tx_burst++) {
+        /* 先刷新音频输出缓冲区 */
+        if (inst->audio_out_len > 0 && inst->audio_out_pos < inst->audio_out_len) {
+            int to_wr = inst->audio_out_len - inst->audio_out_pos;
+            if (inst->platform.audio_write) {
+                int wr = inst->platform.audio_write(
+                    &inst->audio_out_buf[inst->audio_out_pos],
+                    to_wr / 2, 2, inst->platform.user_data);
+                if (wr > 0) inst->audio_out_pos += wr * 2;
+                else if (wr < 0) { inst->audio_out_len = 0; inst->audio_out_pos = 0; break; }
             }
-            if (inst->audio_out_len > 0) break; /* 写不完则停止突发 */
-
-            /* 优先处理重传 */
-            {
-                atcp_arq_block_t retx[ATCP_ARQ_MAX_WINDOW];
-                int n_retx = atcp_arq_sender_check_timeout(&inst->arq_sender, now,
-                                                          retx, ATCP_ARQ_MAX_WINDOW);
-                if (n_retx > 0) {
-                    uint8_t payload[300];
-                    int payload_len = 0;
-                    atcp_frame_build_payload(ATCP_FRAME_DATA, retx[0].seq,
-                                           retx[0].data, (uint16_t)retx[0].data_len, 0,
-                                           payload, (int)sizeof(payload), &payload_len);
-                    inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
-                    inst->stats.retransmit_count++;
-                    continue; /* 刷新后继续 */
-                }
+            if (inst->audio_out_pos >= inst->audio_out_len) {
+                inst->audio_out_len = 0;
+                inst->audio_out_pos = 0;
             }
+        }
+        if (inst->audio_out_len > 0) break; /* 写不完则停止突发 */
 
-            /* 发送新数据 */
-            if (inst->tx_data_len > 0 && inst->tx_data_pos < inst->tx_data_len
-                && !atcp_arq_sender_window_full(&inst->arq_sender)) {
-                int remaining = inst->tx_data_len - inst->tx_data_pos;
-                int chunk = (remaining < ATCP_ARQ_MAX_BLOCK_SIZE)
-                            ? remaining : ATCP_ARQ_MAX_BLOCK_SIZE;
-
-                atcp_arq_sender_submit(&inst->arq_sender,
-                                     &inst->tx_data_buf[inst->tx_data_pos],
-                                     chunk, inst->tx_seq);
-
+        /* 优先处理重传 */
+        {
+            atcp_arq_block_t retx[ATCP_ARQ_MAX_WINDOW];
+            int n_retx = atcp_arq_sender_check_timeout(&inst->arq_sender, now,
+                                                      retx, ATCP_ARQ_MAX_WINDOW);
+            if (n_retx > 0) {
                 uint8_t payload[300];
                 int payload_len = 0;
-                uint8_t flags = 0;
-                if (inst->tx_data_pos + chunk >= inst->tx_data_len) {
-                    flags |= ATCP_FLAG_LAST_BLOCK;
-                }
-                atcp_frame_build_payload(ATCP_FRAME_DATA, inst->tx_seq,
-                                       &inst->tx_data_buf[inst->tx_data_pos],
-                                       (uint16_t)chunk, flags,
+                atcp_frame_build_payload(ATCP_FRAME_DATA, retx[0].seq,
+                                       retx[0].data, (uint16_t)retx[0].data_len, 0,
                                        payload, (int)sizeof(payload), &payload_len);
                 inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
-
-                uint32_t send_now = inst->platform.get_time_ms(inst->platform.user_data);
-                atcp_arq_sender_mark_sent(&inst->arq_sender, inst->tx_seq, send_now);
-
-                inst->tx_data_pos += chunk;
-                inst->tx_seq++;
-                inst->stats.frames_sent++;
-
-                if (inst->tx_data_pos >= inst->tx_data_len) {
-                    inst->tx_data_len = 0;
-                    inst->tx_data_pos = 0;
-                }
-                continue; /* 还有数据就继续 */
+                inst->stats.retransmit_count++;
+                continue; /* 刷新后继续 */
             }
-
-            break; /* 无重传也无新数据，退出突发 */
         }
+
+        /* 发送新数据 */
+        if (inst->tx_data_len > 0 && inst->tx_data_pos < inst->tx_data_len
+            && !atcp_arq_sender_window_full(&inst->arq_sender)) {
+            int remaining = inst->tx_data_len - inst->tx_data_pos;
+            int chunk = (remaining < ATCP_ARQ_MAX_BLOCK_SIZE)
+                        ? remaining : ATCP_ARQ_MAX_BLOCK_SIZE;
+
+            atcp_arq_sender_submit(&inst->arq_sender,
+                                 &inst->tx_data_buf[inst->tx_data_pos],
+                                 chunk, inst->tx_seq);
+
+            uint8_t payload[300];
+            int payload_len = 0;
+            uint8_t flags = 0;
+            if (inst->tx_data_pos + chunk >= inst->tx_data_len) {
+                flags |= ATCP_FLAG_LAST_BLOCK;
+            }
+            atcp_frame_build_payload(ATCP_FRAME_DATA, inst->tx_seq,
+                                   &inst->tx_data_buf[inst->tx_data_pos],
+                                   (uint16_t)chunk, flags,
+                                   payload, (int)sizeof(payload), &payload_len);
+            inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
+
+            uint32_t send_now = inst->platform.get_time_ms(inst->platform.user_data);
+            atcp_arq_sender_mark_sent(&inst->arq_sender, inst->tx_seq, send_now);
+
+            inst->tx_data_pos += chunk;
+            inst->tx_seq++;
+            inst->stats.frames_sent++;
+
+            if (inst->tx_data_pos >= inst->tx_data_len) {
+                inst->tx_data_len = 0;
+                inst->tx_data_pos = 0;
+            }
+            continue; /* 还有数据就继续 */
+        }
+
+        break; /* 无重传也无新数据，退出突发 */
     }
 
-    /* === 6. 音频输出 === */
+    return ATCP_OK;
+}
+
+/* 将音频输出缓冲区的数据写入平台 */
+static void tick_audio_output(atcp_instance_t *inst)
+{
     if (inst->audio_out_len > 0 && inst->audio_out_pos < inst->audio_out_len) {
         int to_write = inst->audio_out_len - inst->audio_out_pos;
         if (inst->platform.audio_write) {
@@ -868,6 +850,36 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
             inst->audio_out_pos = 0;
         }
     }
+}
+
+/* ================================================================
+ * atcp_tick() 主函数
+ * ================================================================ */
+
+atcp_status_t atcp_tick(atcp_instance_t *inst)
+{
+    if (!inst) return ATCP_ERR_INVALID_PARAM;
+
+    uint32_t now = 0;
+    if (inst->platform.get_time_ms) {
+        now = inst->platform.get_time_ms(inst->platform.user_data);
+    }
+
+    /* 1. 音频输入 + AGC */
+    tick_audio_input(inst);
+
+    /* 2. 帧同步 + 解调 + 帧处理 */
+    tick_frame_sync_and_demod(inst, now);
+
+    /* 3. 握手自动推进 */
+    tick_handshake(inst, now);
+
+    /* 4. 已连接：心跳 + ARQ + 数据发送 */
+    atcp_status_t rc = tick_connected(inst, now);
+    if (rc != ATCP_OK) return rc;
+
+    /* 5. 音频输出 */
+    tick_audio_output(inst);
 
     return ATCP_OK;
 }
