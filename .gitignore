@@ -95,3 +95,4 @@ project.nuget.cache
 *.swp
 *~
 .qoder/
+report.md

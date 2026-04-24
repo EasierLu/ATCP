@@ -112,14 +112,28 @@ public class TcpAudioTransport : IDisposable
         _role = role;
         Console.WriteLine($"[Transport] 正在连接中间件 {host} (角色: {role})...");
 
-        _lClient = ConnectChannel(host, lPort, role, "L-Channel");
-        _lStream = _lClient.GetStream();
+        try
+        {
+            _lClient = ConnectChannel(host, lPort, role, "L-Channel");
+            _lStream = _lClient.GetStream();
 
-        _rClient = ConnectChannel(host, rPort, role, "R-Channel");
-        _rStream = _rClient.GetStream();
+            _rClient = ConnectChannel(host, rPort, role, "R-Channel");
+            _rStream = _rClient.GetStream();
 
-        _micClient = ConnectChannel(host, micPort, role, "Mic-Channel");
-        _micStream = _micClient.GetStream();
+            _micClient = ConnectChannel(host, micPort, role, "Mic-Channel");
+            _micStream = _micClient.GetStream();
+        }
+        catch
+        {
+            // 连接过程中某个通道失败，清理已建立的连接
+            _micStream?.Dispose(); _micStream = null;
+            _micClient?.Dispose(); _micClient = null;
+            _rStream?.Dispose();   _rStream = null;
+            _rClient?.Dispose();   _rClient = null;
+            _lStream?.Dispose();   _lStream = null;
+            _lClient?.Dispose();   _lClient = null;
+            throw;
+        }
 
         Console.WriteLine("[Transport] 所有通道已连接。");
     }

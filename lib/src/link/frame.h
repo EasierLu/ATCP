@@ -27,10 +27,12 @@ atcp_status_t atcp_frame_header_deserialize(const uint8_t *buf, atcp_frame_heade
 
 /* 构建完整帧payload（帧头 + 用户数据），输出用于后续RS编码的字节流
  * payload_out = [header_bytes(10)] + [user_data(len)]
+ * payload_out_size 为 payload_out 缓冲区总大小，防止溢出
  * 返回总长度 */
 atcp_status_t atcp_frame_build_payload(atcp_frame_type_t type, uint16_t seq,
                                    const uint8_t *data, uint16_t data_len,
-                                   uint8_t flags, uint8_t *payload_out, int *payload_len);
+                                   uint8_t flags, uint8_t *payload_out,
+                                   int payload_out_size, int *payload_len);
 
 /* 解析帧payload，提取帧头和用户数据 */
 atcp_status_t atcp_frame_parse_payload(const uint8_t *payload, int payload_len,

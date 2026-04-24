@@ -45,12 +45,17 @@ atcp_status_t atcp_frame_header_deserialize(const uint8_t *buf, atcp_frame_heade
 
 atcp_status_t atcp_frame_build_payload(atcp_frame_type_t type, uint16_t seq,
                                    const uint8_t *data, uint16_t data_len,
-                                   uint8_t flags, uint8_t *payload_out, int *payload_len)
+                                   uint8_t flags, uint8_t *payload_out,
+                                   int payload_out_size, int *payload_len)
 {
     if (!payload_out || !payload_len)
         return ATCP_ERR_INVALID_PARAM;
     if (data_len > 0 && !data)
         return ATCP_ERR_INVALID_PARAM;
+
+    int required = ATCP_FRAME_HEADER_SIZE + (int)data_len;
+    if (required > payload_out_size)
+        return ATCP_ERR_BUFFER_FULL;
 
     atcp_frame_header_t hdr;
     memset(&hdr, 0, sizeof(hdr));

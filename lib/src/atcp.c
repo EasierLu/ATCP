@@ -30,7 +30,9 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>  /* 临时调试输出 */
+#ifdef ATCP_DEBUG
+#include <stdio.h>
+#endif
 
 /* ================================================================
  * 内部实例结构
@@ -223,7 +225,7 @@ static void inst_process_received_frame(atcp_instance_t *inst,
             int payload_len = 0;
             atcp_frame_build_payload(ATCP_FRAME_HANDSHAKE, 0,
                                    resp, (uint16_t)resp_len, 0,
-                                   payload, &payload_len);
+                                   payload, (int)sizeof(payload), &payload_len);
             inst_encode_and_modulate(inst, payload, payload_len, ATCP_TRUE);
         }
         if (atcp_handshake_get_state(&inst->handshake) == ATCP_HS_CONNECTED) {
@@ -253,7 +255,7 @@ static void inst_process_received_frame(atcp_instance_t *inst,
         int ack_payload_len = 0;
         atcp_frame_build_payload(ATCP_FRAME_ACK, header->seq,
                                ack_buf, (uint16_t)ack_len, 0,
-                               ack_payload, &ack_payload_len);
+                               ack_payload, (int)sizeof(ack_payload), &ack_payload_len);
         /* 连接后使用协商QAM，握手阶段用QPSK */
         atcp_bool_t ack_qpsk = (inst->state == ATCP_STATE_CONNECTING) ? ATCP_TRUE : ATCP_FALSE;
         inst_encode_and_modulate(inst, ack_payload, ack_payload_len, ack_qpsk);
@@ -338,7 +340,12 @@ atcp_instance_t *atcp_create(const atcp_config_t *config, const atcp_platform_t 
 
     /* 初始化各层 */
     atcp_rs_init(&inst->rs, inst->config.rs_nsym);
-    atcp_frame_sync_init(&inst->frame_sync, &inst->config);
+    if (atcp_frame_sync_init(&inst->frame_sync, &inst->config) != ATCP_OK) {
+        free(inst->audio_in_buf);
+        free(inst->audio_out_buf);
+        free(inst);
+        return NULL;
+    }
     atcp_agc_init(&inst->agc, 0.5f);
     atcp_heartbeatcp_init(&inst->heartbeat,
                       (uint32_t)inst->config.heartbeatcp_interval_ms,
@@ -385,7 +392,7 @@ atcp_status_t atcp_connect(atcp_instance_t *inst)
     int payload_len = 0;
     rc = atcp_frame_build_payload(ATCP_FRAME_HANDSHAKE, 0,
                                 hs_msg, (uint16_t)hs_len, 0,
-                                payload, &payload_len);
+                                payload, (int)sizeof(payload), &payload_len);
     if (rc != ATCP_OK) return rc;
 
     /* 编码调制（使用QPSK低速模式） */
@@ -505,6 +512,7 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
         int got = inst->platform.audio_read(
             &inst->audio_in_buf[inst->audio_in_len], space, 1,
             inst->platform.user_data);
+        if (got > space) got = space;  /* 防止回调返回值超出缓冲区剩余空间 */
         if (got > 0) {
             /* === 2. AGC处理（仅处理新数据） === */
             atcp_agc_process(&inst->agc,
@@ -713,7 +721,7 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
                 int payload_len = 0;
                 atcp_frame_build_payload(ATCP_FRAME_HANDSHAKE, 0,
                                        p4_msg, (uint16_t)p4_len, 0,
-                                       payload, &payload_len);
+                                       payload, (int)sizeof(payload), &payload_len);
                 inst_encode_and_modulate(inst, payload, payload_len, ATCP_TRUE);
             }
 
@@ -732,7 +740,9 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
                 inst->state = ATCP_STATE_CONNECTED;
                 atcp_heartbeatcp_rx_update(&inst->heartbeat, now);
                 atcp_handshake_get_config(&inst->handshake, &inst->config);
+#ifdef ATCP_DEBUG
                 fprintf(stderr, "[ATCP-DBG] === HANDSHAKE CONNECTED ===\n");
+#endif
             }
         }
     }
@@ -741,10 +751,12 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
     if (inst->state == ATCP_STATE_CONNECTED) {
         /* 心跳检查 */
         if (atcp_heartbeatcp_is_timeout(&inst->heartbeat, now)) {
+#ifdef ATCP_DEBUG
             fprintf(stderr, "[ATCP] HEARTBEAT TIMEOUT: now=%u last_rx=%u diff=%u timeout=%u\n",
                     now, inst->heartbeat.last_rx_time_ms,
                     now - inst->heartbeat.last_rx_time_ms,
                     inst->heartbeat.timeout_ms);
+#endif
             inst->state = ATCP_STATE_DISCONNECTED;
             return ATCP_ERR_TIMEOUT;
         }
@@ -754,7 +766,7 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
             uint8_t hb_payload[64];
             int hb_len = 0;
             atcp_frame_build_payload(ATCP_FRAME_HEARTBEAT, 0, NULL, 0, 0,
-                                   hb_payload, &hb_len);
+                                   hb_payload, (int)sizeof(hb_payload), &hb_len);
             inst_encode_and_modulate(inst, hb_payload, hb_len, ATCP_FALSE);
             atcp_heartbeatcp_tx_update(&inst->heartbeat, now);
         }
@@ -789,7 +801,7 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
                     int payload_len = 0;
                     atcp_frame_build_payload(ATCP_FRAME_DATA, retx[0].seq,
                                            retx[0].data, (uint16_t)retx[0].data_len, 0,
-                                           payload, &payload_len);
+                                           payload, (int)sizeof(payload), &payload_len);
                     inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
                     inst->stats.retransmit_count++;
                     continue; /* 刷新后继续 */
@@ -816,7 +828,7 @@ atcp_status_t atcp_tick(atcp_instance_t *inst)
                 atcp_frame_build_payload(ATCP_FRAME_DATA, inst->tx_seq,
                                        &inst->tx_data_buf[inst->tx_data_pos],
                                        (uint16_t)chunk, flags,
-                                       payload, &payload_len);
+                                       payload, (int)sizeof(payload), &payload_len);
                 inst_encode_and_modulate(inst, payload, payload_len, ATCP_FALSE);
 
                 uint32_t send_now = inst->platform.get_time_ms(inst->platform.user_data);
