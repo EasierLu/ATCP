@@ -66,20 +66,4 @@ atcp_status_t atcp_handshake_get_config(const atcp_handshake_t *hs, atcp_config_
 /* 自动降级：将QAM阶数降一级 */
 atcp_bool_t atcp_handshake_downgrade(atcp_handshake_t *hs);
 
-/* 握手自动推进（每 tick 调用一次）
- * 当处于 PHASE3_TESTING 状态时自动报告质量并推进到 PHASE4
- * out_payload/out_len: 若需要发送帧则填充（调用者需编码调制后发送）
- * state_changed: 标识握手状态是否发生了变化 */
-atcp_status_t atcp_handshake_tick(atcp_handshake_t *hs,
-                                  uint8_t *out_payload, int *out_len,
-                                  atcp_bool_t *state_changed);
-
-/* 序列化协商参数到 buf（14字节），返回写入字节数 */
-int atcp_handshake_params_serialize(const atcp_handshake_params_t *p,
-                                    uint8_t *buf);
-
-/* 从 buf 反序列化协商参数 */
-atcp_status_t atcp_handshake_params_deserialize(const uint8_t *buf, int len,
-                                                 atcp_handshake_params_t *p);
-
 #endif

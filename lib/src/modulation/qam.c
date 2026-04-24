@@ -2,56 +2,6 @@
 #include <math.h>
 #include <string.h>
 
-/* ---------- 预计算星座查找表 ---------- */
-
-/* 正向坐标查找表：lut[gray_index] = 2 * gray_to_bin(gray_index) - (sqrt_m - 1)
- * 消除运行时的 Gray→Binary 转换和坐标计算 */
-
-/* QPSK (order=4, sqrt_m=2): gray {0,1} → bin {0,1} → coord: 2*bin - 1 */
-static const int8_t qam_coord_lut_2[2] = { -1, 1 };
-
-/* 16-QAM (order=16, sqrt_m=4): gray {0,1,2,3} → bin {0,1,3,2} → coord: 2*bin - 3 */
-static const int8_t qam_coord_lut_4[4] = { -3, -1, 3, 1 };
-
-/* 64-QAM (order=64, sqrt_m=8): gray {0..7} → bin → coord: 2*bin - 7 */
-static const int8_t qam_coord_lut_8[8] = { -7, -5, -1, -3, 7, 5, 1, 3 };
-
-/* 256-QAM (order=256, sqrt_m=16): gray {0..15} → bin → coord: 2*bin - 15 */
-static const int8_t qam_coord_lut_16[16] = {
-    -15, -13, -9, -11, -1, -3, -7, -5,
-     15,  13,  9,  11,  1,  3,  7,  5
-};
-
-/* 反向查找表: bin_to_gray LUT，用于解调时避免 bin_to_gray() 调用 */
-static const uint8_t gray_lut_2[2] = { 0, 1 };
-static const uint8_t gray_lut_4[4] = { 0, 1, 3, 2 };
-static const uint8_t gray_lut_8[8] = { 0, 1, 3, 2, 6, 7, 5, 4 };
-static const uint8_t gray_lut_16[16] = {
-    0, 1, 3, 2, 6, 7, 5, 4, 12, 13, 15, 14, 10, 11, 9, 8
-};
-
-static const int8_t *get_coord_lut(int sqrt_m)
-{
-    switch (sqrt_m) {
-        case  2: return qam_coord_lut_2;
-        case  4: return qam_coord_lut_4;
-        case  8: return qam_coord_lut_8;
-        case 16: return qam_coord_lut_16;
-        default: return NULL;
-    }
-}
-
-static const uint8_t *get_gray_lut(int sqrt_m)
-{
-    switch (sqrt_m) {
-        case  2: return gray_lut_2;
-        case  4: return gray_lut_4;
-        case  8: return gray_lut_8;
-        case 16: return gray_lut_16;
-        default: return NULL;
-    }
-}
-
 /* ---------- 内部工具 ---------- */
 
 /* 二进制转Gray码 */
@@ -109,24 +59,30 @@ atcp_status_t atcp_qam_modulate(const uint8_t *bits, int n_bits, int order,
     int half_bps = bps / 2;                           /* I轴/Q轴各占的bit数 */
     float norm = atcp_qam_norm_factor(order);
 
-    const int8_t *coord_lut = get_coord_lut(sqrt_m);
-
     for (int s = 0; s < nsym; s++) {
         const uint8_t *bp = bits + s * bps;
 
-        /* 提取 I 轴 Gray 码索引 */
-        int i_gray = 0;
+        /* 高半部分bit -> I轴Gray值 */
+        int i_val = 0;
         for (int b = 0; b < half_bps; b++)
-            i_gray = (i_gray << 1) | bp[b];
+            i_val = (i_val << 1) | bp[b];
 
-        /* 提取 Q 轴 Gray 码索引 */
-        int q_gray = 0;
+        /* 低半部分bit -> Q轴Gray值 */
+        int q_val = 0;
         for (int b = 0; b < half_bps; b++)
-            q_gray = (q_gray << 1) | bp[half_bps + b];
+            q_val = (q_val << 1) | bp[half_bps + b];
 
-        /* 查表获取坐标（消除 gray_to_bin 和算术运算） */
-        symbols_out[s].re = (float)coord_lut[i_gray] / norm;
-        symbols_out[s].im = (float)coord_lut[q_gray] / norm;
+        /* Gray码值 -> 星座坐标: gray_index g -> 映射到奇数序列
+         * g -> bin_val = gray_to_bin(g)
+         * coord = 2*bin_val - (sqrt_m - 1)  => {-(sqrt_m-1), ..., -1, +1, ..., +(sqrt_m-1)} */
+        int i_bin = gray_to_bin(i_val);
+        int q_bin = gray_to_bin(q_val);
+
+        float i_coord = (float)(2 * i_bin - (sqrt_m - 1));
+        float q_coord = (float)(2 * q_bin - (sqrt_m - 1));
+
+        symbols_out[s].re = i_coord / norm;
+        symbols_out[s].im = q_coord / norm;
     }
 
     return ATCP_OK;
@@ -162,10 +118,9 @@ atcp_status_t atcp_qam_demodulate(const atcp_complex_t *symbols, int n_symbols, 
         if (q_bin < 0) q_bin = 0;
         if (q_bin >= sqrt_m) q_bin = sqrt_m - 1;
 
-        /* 查表获取Gray码（消除 bin_to_gray 调用） */
-        const uint8_t *g_lut = get_gray_lut(sqrt_m);
-        int i_gray = g_lut[i_bin];
-        int q_gray = g_lut[q_bin];
+        /* 二进制转Gray码 */
+        int i_gray = bin_to_gray(i_bin);
+        int q_gray = bin_to_gray(q_bin);
 
         /* 输出bit */
         uint8_t *bp = bits_out + s * bps;

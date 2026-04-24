@@ -1,5 +1,4 @@
 #include "handshake.h"
-#include "frame.h"
 #include <string.h>
 
 /* 握手消息固定大小：14字节
@@ -237,69 +236,4 @@ atcp_bool_t atcp_handshake_downgrade(atcp_handshake_t *hs)
         }
         return ATCP_FALSE;
     }
-}
-
-/* ---------- 公开序列化/反序列化接口 ---------- */
-
-int atcp_handshake_params_serialize(const atcp_handshake_params_t *p,
-                                    uint8_t *buf)
-{
-    hs_params_serialize(p, buf);
-    return ATCP_HS_MSG_SIZE;
-}
-
-atcp_status_t atcp_handshake_params_deserialize(const uint8_t *buf, int len,
-                                                 atcp_handshake_params_t *p)
-{
-    if (!buf || !p || len < ATCP_HS_MSG_SIZE)
-        return ATCP_ERR_INVALID_PARAM;
-    hs_params_deserialize(buf, p);
-    return ATCP_OK;
-}
-
-/* ---------- 握手自动推进 ---------- */
-
-atcp_status_t atcp_handshake_tick(atcp_handshake_t *hs,
-                                  uint8_t *out_payload, int *out_len,
-                                  atcp_bool_t *state_changed)
-{
-    if (!hs || !out_payload || !out_len || !state_changed)
-        return ATCP_ERR_INVALID_PARAM;
-
-    *out_len = 0;
-    *state_changed = ATCP_FALSE;
-
-    atcp_handshake_state_t prev_state = hs->state;
-
-    /* Phase3 自动推进: 报告完美链路质量（模拟器无噪声信道） */
-    if (hs->state == ATCP_HS_PHASE3_TESTING) {
-        atcp_handshake_report_quality(hs, 0.0f, 0.0f);
-    }
-
-    /* Phase3 通过后生成 Phase4 消息 */
-    if (hs->state == ATCP_HS_PHASE3_DONE) {
-        uint8_t p4_data[14];
-        atcp_handshake_params_serialize(&hs->negotiated, p4_data);
-
-        uint8_t p4_msg[256];
-        int p4_len = 0;
-        atcp_handshake_process(hs, p4_data, 14, p4_msg, &p4_len);
-
-        if (p4_len > 0) {
-            /* 构建帧payload */
-            atcp_frame_build_payload(ATCP_FRAME_HANDSHAKE, 0,
-                                   p4_msg, (uint16_t)p4_len, 0,
-                                   out_payload, 300, out_len);
-        }
-
-        /* PHASE4_RECEIVED 需再推进一步到 CONNECTED */
-        if (hs->state == ATCP_HS_PHASE4_RECEIVED) {
-            uint8_t dummy_resp[256];
-            int dummy_len = 0;
-            atcp_handshake_process(hs, p4_data, 14, dummy_resp, &dummy_len);
-        }
-    }
-
-    *state_changed = (hs->state != prev_state) ? ATCP_TRUE : ATCP_FALSE;
-    return ATCP_OK;
 }

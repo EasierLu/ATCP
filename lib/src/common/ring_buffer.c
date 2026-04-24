@@ -38,20 +38,18 @@ atcp_status_t atcp_ringbuf_write(atcp_ringbuf_t *rb, const float *data, int n)
 atcp_status_t atcp_ringbuf_read(atcp_ringbuf_t *rb, float *data, int n)
 {
     int first, second;
-    if (!rb || n <= 0)
+    if (!rb || !data || n <= 0)
         return ATCP_ERR_INVALID_PARAM;
     if (n > rb->count)
         return ATCP_ERR_BUFFER_EMPTY;
 
-    if (data) {
-        first = rb->capacity - rb->tail;
-        if (first >= n) {
-            memcpy(data, rb->buffer + rb->tail, (size_t)n * sizeof(float));
-        } else {
-            memcpy(data, rb->buffer + rb->tail, (size_t)first * sizeof(float));
-            second = n - first;
-            memcpy(data + first, rb->buffer, (size_t)second * sizeof(float));
-        }
+    first = rb->capacity - rb->tail;
+    if (first >= n) {
+        memcpy(data, rb->buffer + rb->tail, (size_t)n * sizeof(float));
+    } else {
+        memcpy(data, rb->buffer + rb->tail, (size_t)first * sizeof(float));
+        second = n - first;
+        memcpy(data + first, rb->buffer, (size_t)second * sizeof(float));
     }
     rb->tail = (rb->tail + n) % rb->capacity;
     rb->count -= n;

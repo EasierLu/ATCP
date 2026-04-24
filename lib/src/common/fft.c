@@ -41,11 +41,10 @@ static void fft_core(atcp_complex_t *buf, int n)
     for (len = 2; len <= n; len <<= 1) {
         int half = len >> 1;
         float angle = -2.0f * (float)M_PI / (float)len;
-        float wn_re = cosf(angle);
-        float wn_im = sinf(angle);
         for (i = 0; i < n; i += len) {
-            float w_re = 1.0f, w_im = 0.0f;
             for (j = 0; j < half; j++) {
+                float w_re = cosf(angle * j);
+                float w_im = sinf(angle * j);
                 atcp_complex_t *even = &buf[i + j];
                 atcp_complex_t *odd  = &buf[i + j + half];
                 float tre = odd->re * w_re - odd->im * w_im;
@@ -54,9 +53,6 @@ static void fft_core(atcp_complex_t *buf, int n)
                 odd->im = even->im - tim;
                 even->re += tre;
                 even->im += tim;
-                float tmp = w_re * wn_re - w_im * wn_im;
-                w_im = w_re * wn_im + w_im * wn_re;
-                w_re = tmp;
             }
         }
     }
